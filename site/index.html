@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1720">
+<title>Carburants</title>
+<style>
+:root{--bg:#0f1720;--card:#18222e;--line:#263241;--txt:#e8edf2;--mut:#8a98a8;--acc:#ffc94d;
+--good:#3ecf8e;--bad:#ff6b6b;--mid:#9fb3c8}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 14px 8px;border-bottom:1px solid var(--line)}
+.row{display:flex;align-items:center;gap:8px}
+.loc{flex:1;min-width:0}
+.loc b{display:block;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.loc small{color:var(--mut)}
+button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 11px}
+button.on{background:var(--acc);color:#111;border-color:var(--acc);font-weight:600}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-top:9px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chips button{flex:none;padding:6px 12px;border-radius:20px}
+#panel{display:none;padding:10px 0 4px}
+#panel.open{display:block}
+input{font:inherit;width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--txt)}
+#sugg div{padding:9px 6px;border-bottom:1px solid var(--line)}
+main{padding:10px 12px 40px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.sum{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center}
+.sum div b{display:block;font-size:18px}
+.sum div small{color:var(--mut);font-size:12px}
+.tip{margin-top:8px;color:var(--mut);font-size:13px}
+.tip b{color:var(--txt)}
+.st{display:flex;gap:12px;align-items:center;padding:11px 12px;cursor:pointer}
+.pr{min-width:74px;text-align:center}
+.pr b{font-size:21px;font-variant-numeric:tabular-nums}
+.pr small{display:block;font-size:11px;color:var(--mut)}
+.info{flex:1;min-width:0}
+.info .ad{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.info small{color:var(--mut)}
+.bdg{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;margin-right:4px;border:1px solid}
+.lo{color:var(--good);border-color:var(--good)}.hi{color:var(--bad);border-color:var(--bad)}.md{color:var(--mid);border-color:var(--line)}
+.up{color:var(--bad)}.dn{color:var(--good)}
+.old{opacity:.55}
+.best{border-color:var(--acc)}
+#sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:10;align-items:flex-end}
+#sheet.open{display:flex}
+#sheet .in{background:var(--bg);width:100%;max-height:88vh;overflow:auto;border-radius:18px 18px 0 0;padding:16px 14px 30px;border-top:1px solid var(--line)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0}
+.grid div{background:var(--card);border-radius:10px;padding:8px;text-align:center}
+.grid div small{display:block;color:var(--mut);font-size:11px}
+.grid div.cur{outline:2px solid var(--acc)}
+.links{display:flex;gap:8px;margin-top:12px}
+.links a{flex:1;text-align:center;padding:10px;border-radius:10px;background:var(--card);border:1px solid var(--line);color:var(--txt);text-decoration:none}
+svg text{fill:var(--mut);font-size:10px}
+.mut{color:var(--mut);font-size:13px}
+h3{margin:14px 0 6px;font-size:15px}
+.empty{text-align:center;color:var(--mut);padding:30px 10px}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div class="loc"><b id="locName">Paris</b><small id="locSub">rayon 6 km</small></div>
+    <button id="sortBtn">Tri : prix</button>
+    <button id="locBtn">📍 Changer</button>
+  </div>
+  <div id="panel">
+    <div class="row" style="margin-bottom:8px">
+      <button id="gpsBtn" style="flex:1">Ma position</button>
+      <button id="parisBtn" style="flex:1">Paris</button>
+    </div>
+    <input id="q" placeholder="Commune, adresse ou code postal" autocomplete="off">
+    <div id="sugg"></div>
+    <div class="chips" id="radii"></div>
+  </div>
+  <div class="chips" id="fuels"></div>
+</header>
+<main>
+  <div id="summary"></div>
+  <div id="list"><div class="empty">Chargement…</div></div>
+  <p class="mut" id="foot"></p>
+</main>
+<div id="sheet"><div class="in" id="sheetIn"></div></div>
+
+<script>
+const FUELS = {Gazole:"Gazole", E10:"SP95-E10", SP98:"SP98", SP95:"SP95", E85:"E85", GPLc:"GPL"};
+const DAYS = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
+const RADII = [1,3,6,10,20];
+const PARIS = {name:"Paris", lat:48.8566, lon:2.3522, r:6};
+const store = {
+  get(k,d){try{const v=localStorage.getItem("carb_"+k);return v?JSON.parse(v):d}catch(e){return d}},
+  set(k,v){try{localStorage.setItem("carb_"+k,JSON.stringify(v))}catch(e){}}
+};
+let loc = store.get("loc", PARIS);
+let fuel = store.get("fuel", "Gazole");
+let sortBy = store.get("sort", "prix");
+let meta = null, tiles = {}, htiles = {}, shown = [];
+
+const $ = id => document.getElementById(id);
+const eur = m => (m/1000).toFixed(3).replace(".", ",");
+const cts = m => (m/10).toFixed(1).replace(".", ",");
+function km(a,b,c,d){const R=6371,r=Math.PI/180,x=(c-a)*r,y=(d-b)*r*Math.cos((a+c)/2*r);return R*Math.sqrt(x*x+y*y)}
+function age(ts){const h=(Date.now()/1000-ts)/3600;if(h<1)return"il y a "+Math.max(1,Math.round(h*60))+" min";if(h<24)return"il y a "+Math.round(h)+" h";return"il y a "+Math.round(h/24)+" j"}
+function esc(s){return String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(r.status);return r.json()}
+
+function tileKeys(lat,lon,rkm){
+  const T=meta.tile, dl=rkm/111, dg=rkm/(111*Math.cos(lat*Math.PI/180)), out=[];
+  for(let a=Math.floor((lat-dl)/T);a<=Math.floor((lat+dl)/T);a++)
+    for(let o=Math.floor((lon-dg)/T);o<=Math.floor((lon+dg)/T);o++){const k=a+"_"+o;if(meta.tiles.includes(k))out.push(k)}
+  return out;
+}
+async function loadTiles(keys){
+  await Promise.all(keys.filter(k=>!tiles[k]).map(async k=>{try{tiles[k]=await getJSON("data/t/"+k+".json")}catch(e){tiles[k]=[]}}));
+}
+
+function drawHeader(){
+  $("locName").textContent = loc.name;
+  $("locSub").textContent = "rayon "+loc.r+" km";
+  $("sortBtn").textContent = "Tri : "+sortBy;
+  $("fuels").innerHTML = Object.entries(FUELS).map(([k,v])=>`<button data-f="${k}" class="${k===fuel?"on":""}">${v}</button>`).join("");
+  $("radii").innerHTML = RADII.map(r=>`<button data-r="${r}" class="${r===loc.r?"on":""}">${r} km</button>`).join("");
+}
+
+async function refresh(){
+  drawHeader();
+  if(!meta) return;
+  const keys = tileKeys(loc.lat, loc.lon, loc.r);
+  await loadTiles(keys);
+  const all = [];
+  for(const k of keys) for(const s of tiles[k]){
+    const d = km(loc.lat,loc.lon,s.a,s.o);
+    if(d<=loc.r) all.push({...s, d});
+  }
+  const withF = all.filter(s=>s.p[fuel]);
+  const recent = withF.filter(s=>Date.now()/1000 - s.p[fuel][1] < 7*86400);
+  shown = withF.sort((x,y)=> sortBy==="prix" ? (x.p[fuel][0]-y.p[fuel][0]) || (x.d-y.d) : x.d-y.d);
+  drawSummary(recent, all);
+  drawList(all.length);
+}
+
+function drawSummary(recent, all){
+  if(!recent.length){$("summary").innerHTML="";return}
+  const ps = recent.map(s=>s.p[fuel][0]).sort((a,b)=>a-b);
+  const med = ps[Math.floor(ps.length/2)];
+  // effet jour de la semaine moyen dans la zone
+  const wds = recent.map(s=>s.s&&s.s[fuel]&&s.s[fuel].wd).filter(Boolean);
+  let tip = "";
+  if(wds.length>=5){
+    const avg = [0,1,2,3,4,5,6].map(i=>wds.reduce((a,w)=>a+w[i],0)/wds.length);
+    const lo = avg.indexOf(Math.min(...avg)), hi = avg.indexOf(Math.max(...avg));
+    const gap = avg[hi]-avg[lo];
+    tip = gap>=3
+      ? `Dans cette zone, le <b>${DAYS[lo]}</b> est en général le jour le moins cher, le <b>${DAYS[hi]}</b> le plus cher (écart moyen ${cts(gap)} ct/L).`
+      : `Dans cette zone, le jour de la semaine ne change presque rien au prix (moins de 0,3 ct/L).`;
+  }
+  const d7s = recent.map(s=>s.s&&s.s[fuel]&&s.s[fuel].d7).filter(x=>x!==undefined);
+  if(d7s.length>=5){
+    const m = d7s.sort((a,b)=>a-b)[Math.floor(d7s.length/2)];
+    tip += ` Sur 7 jours, les prix ont ${m>0?"augmenté":"baissé"} de ${cts(Math.abs(m))} ct/L en médiane.`;
+    if(Math.abs(m)<2) tip = tip.replace(/ont (augmenté|baissé) de [\d,]+ ct\/L en médiane/,"peu bougé");
+  }
+  const save40 = (med-ps[0])*40/1000;
+  $("summary").innerHTML = `<div class="card"><div class="sum">
+    <div><b>${eur(ps[0])}</b><small>le moins cher</small></div>
+    <div><b>${eur(med)}</b><small>médiane</small></div>
+    <div><b>${recent.length}</b><small>stations</small></div></div>
+    <div class="tip">Plein de 40 L à la moins chère : <b>${save40.toFixed(2).replace(".",",")} €</b> d'économie par rapport à la médiane. ${tip}</div></div>`;
+}
+
+function badge(s){
+  const e = s.s && s.s[fuel]; if(!e) return "";
+  let b = "";
+  if(e.pct!==undefined) b += e.pct<=25?`<span class="bdg lo">bas pour elle</span>`:e.pct>=75?`<span class="bdg hi">haut pour elle</span>`:`<span class="bdg md">habituel</span>`;
+  if(e.d7!==undefined && Math.abs(e.d7)>=5) b += `<span class="${e.d7>0?"up":"dn"}">${e.d7>0?"▲":"▼"} ${cts(Math.abs(e.d7))} ct sur 7 j</span>`;
+  return b;
+}
+
+function drawList(nAll){
+  if(!shown.length){$("list").innerHTML=`<div class="empty">Aucune station avec ${FUELS[fuel]} dans ce rayon (${nAll} stations au total).<br>Agrandis le rayon.</div>`;return}
+  const min = Math.min(...shown.filter(s=>Date.now()/1000-s.p[fuel][1]<7*86400).map(s=>s.p[fuel][0]));
+  $("list").innerHTML = shown.slice(0,80).map((s,i)=>{
+    const [p,ts] = s.p[fuel], old = Date.now()/1000-ts > 7*86400;
+    return `<div class="card st ${old?"old":""} ${p===min?"best":""}" data-i="${i}">
+      <div class="pr"><b>${eur(p)}</b><small>${age(ts)}</small></div>
+      <div class="info"><div class="ad">${esc(s.ad)}</div>
+        <small>${esc(s.v)} · ${s.d<1?Math.round(s.d*1000)+" m":s.d.toFixed(1).replace(".",",")+" km"}${s.au?" · 24/24":""}</small>
+        <div>${badge(s)}</div></div></div>`;
+  }).join("") + (shown.length>80?`<p class="mut">+ ${shown.length-80} autres stations : réduis le rayon.</p>`:"");
+}
+
+function chart(series, dep, start){
+  const vals = series.concat(dep||[]).filter(v=>v!=null);
+  if(vals.length<5) return "";
+  const W=340,H=130,P=28, lo=Math.min(...vals)-5, hi=Math.max(...vals)+5, n=series.length;
+  const x=i=>P+(W-P-6)*i/(n-1), y=v=>8+(H-26)*(hi-v)/(hi-lo);
+  const path=(arr)=>{let d="",pen=false;arr.forEach((v,i)=>{if(v==null){pen=false;return}d+=(pen?"L":"M")+x(i).toFixed(1)+","+y(v).toFixed(1);pen=true});return d};
+  const s0=new Date(start), lab=i=>{const d=new Date(s0.getTime()+i*86400000);return d.getDate()+"/"+(d.getMonth()+1)};
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">
+    <text x="0" y="12">${eur(hi-5)}</text><text x="0" y="${H-20}">${eur(lo+5)}</text>
+    ${dep?`<path d="${path(dep)}" fill="none" stroke="#8a98a8" stroke-width="1.5" stroke-dasharray="4 3"/>`:""}
+    <path d="${path(series)}" fill="none" stroke="#ffc94d" stroke-width="2.2"/>
+    <text x="${P}" y="${H-4}">${lab(0)}</text><text x="${W/2-10}" y="${H-4}">${lab(Math.floor(n/2))}</text><text x="${W-34}" y="${H-4}">${lab(n-1)}</text>
+  </svg><div class="mut"><span style="color:var(--acc)">━</span> cette station &nbsp; <span>╍</span> médiane du département</div>`;
+}
+
+function wdBars(wd){
+  const mx = Math.max(...wd.map(Math.abs), 1);
+  return `<svg viewBox="0 0 340 120" width="100%">${wd.map((v,i)=>{
+    const h=Math.abs(v)/mx*34, x=10+i*47, y=v<0?52:52-h;
+    return `<rect x="${x}" y="${y}" width="30" height="${Math.max(h,1)}" rx="3" fill="${v<0?"#3ecf8e":"#ff6b6b"}"/>
+      <text x="${x+15}" y="${v<0?y+h+12:y-4}" text-anchor="middle">${v>0?"+":""}${cts(v)}</text>
+      <text x="${x+15}" y="116" text-anchor="middle">${DAYS[i].slice(0,3)}</text>`}).join("")}
+    <line x1="5" x2="335" y1="52" y2="52" stroke="#263241"/></svg>
+    <div class="mut">Écart moyen au prix de la semaine, en centimes par litre (vert = moins cher).</div>`;
+}
+
+async function openStation(s){
+  const k = Math.floor(s.a/meta.tile)+"_"+Math.floor(s.o/meta.tile);
+  const fuels = Object.keys(FUELS).filter(f=>s.p[f]||s.r.includes(f));
+  const e = (s.s&&s.s[fuel])||{};
+  let html = `<div class="row"><div style="flex:1"><b style="font-size:17px">${esc(s.ad)}</b><br><span class="mut">${esc(s.cp)} ${esc(s.v)} · ${s.d.toFixed(1).replace(".",",")} km${s.au?" · automate 24/24":""}</span></div><button id="closeBtn">✕</button></div>
+    <div class="grid">${fuels.map(f=>s.p[f]?`<div class="${f===fuel?"cur":""}"><b>${eur(s.p[f][0])}</b><small>${FUELS[f]} · ${age(s.p[f][1])}</small></div>`:`<div><b>—</b><small>${FUELS[f]} · rupture</small></div>`).join("")}</div>`;
+  if(e.lo!==undefined) html += `<p class="mut">${FUELS[fuel]} sur 90 jours : de ${eur(e.lo)} à ${eur(e.hi)} €. Aujourd'hui, le prix est plus bas que ${100-e.pct} % des jours.</p>`;
+  html += `<div id="ch"><p class="mut">Chargement de l'historique…</p></div>`;
+  if(e.wd){
+    const lo=e.wd.indexOf(Math.min(...e.wd)), hi=e.wd.indexOf(Math.max(...e.wd)), gap=e.wd[hi]-e.wd[lo];
+    html += `<h3>Quel jour faire le plein ici ?</h3>` + (gap>=3?`<p>Plutôt le <b>${DAYS[lo]}</b> (≈ ${cts(gap)} ct/L de moins que le ${DAYS[hi]}).</p>`:`<p class="mut">Ici, le jour ne change presque rien.</p>`) + wdBars(e.wd);
+  }
+  html += `<div class="links"><a href="https://www.google.com/maps/dir/?api=1&destination=${s.a},${s.o}" target="_blank" rel="noopener">Google Maps</a><a href="https://waze.com/ul?ll=${s.a},${s.o}&navigate=yes" target="_blank" rel="noopener">Waze</a></div>`;
+  $("sheetIn").innerHTML = html; $("sheet").classList.add("open");
+  $("closeBtn").onclick = ()=>$("sheet").classList.remove("open");
+  try{
+    if(!htiles[k]) htiles[k] = await getJSON("data/h/"+k+".json");
+    const h = htiles[k], ser = h.s[s.i]&&h.s[s.i][fuel];
+    const dep = s.cp.startsWith("20")?(+s.cp<20200?"2A":"2B"):s.cp.startsWith("97")?s.cp.slice(0,3):s.cp.slice(0,2);
+    const dm = h.dep[dep]&&h.dep[dep][fuel];
+    $("ch").innerHTML = ser ? `<h3>${FUELS[fuel]} sur 90 jours</h3>`+chart(ser, dm, meta.hist_start) : `<p class="mut">Pas encore d'historique pour ce carburant ici.</p>`;
+  }catch(err){ $("ch").innerHTML = `<p class="mut">Historique indisponible.</p>` }
+}
+
+// ---- événements
+$("fuels").onclick = e=>{const f=e.target.dataset.f;if(f){fuel=f;store.set("fuel",f);refresh()}};
+$("radii").onclick = e=>{const r=+e.target.dataset.r;if(r){loc={...loc,r};store.set("loc",loc);refresh()}};
+$("locBtn").onclick = ()=>$("panel").classList.toggle("open");
+$("sortBtn").onclick = ()=>{sortBy=sortBy==="prix"?"distance":"prix";store.set("sort",sortBy);refresh()};
+$("parisBtn").onclick = ()=>{loc={...PARIS};store.set("loc",loc);$("panel").classList.remove("open");refresh()};
+$("gpsBtn").onclick = ()=>{
+  if(!navigator.geolocation){alert("Géolocalisation indisponible");return}
+  $("gpsBtn").textContent="Localisation…";
+  navigator.geolocation.getCurrentPosition(p=>{
+    loc={name:"Ma position",lat:p.coords.latitude,lon:p.coords.longitude,r:loc.r};store.set("loc",loc);
+    $("gpsBtn").textContent="Ma position";$("panel").classList.remove("open");refresh();
+  },()=>{$("gpsBtn").textContent="Ma position";alert("Position refusée ou indisponible")},{enableHighAccuracy:false,timeout:10000});
+};
+let qt;
+$("q").oninput = ()=>{clearTimeout(qt);const q=$("q").value.trim();if(q.length<3){$("sugg").innerHTML="";return}
+  qt=setTimeout(async()=>{
+    let feats=[];
+    for(const u of ["https://data.geopf.fr/geocodage/search?limit=6&q=","https://api-adresse.data.gouv.fr/search/?limit=6&q="]){
+      try{feats=(await (await fetch(u+encodeURIComponent(q))).json()).features||[];if(feats.length)break}catch(e){}
+    }
+    $("sugg").innerHTML=feats.map((f,i)=>`<div data-i="${i}">${esc(f.properties.label)}</div>`).join("")||`<div class="mut">Aucun résultat</div>`;
+    $("sugg").onclick=e=>{const f=feats[e.target.dataset.i];if(!f)return;
+      loc={name:f.properties.city&&f.properties.type!=="municipality"?f.properties.name+", "+f.properties.city:f.properties.label,lat:f.geometry.coordinates[1],lon:f.geometry.coordinates[0],r:loc.r};
+      store.set("loc",loc);$("q").value="";$("sugg").innerHTML="";$("panel").classList.remove("open");refresh()};
+  },300)};
+$("list").onclick = e=>{const c=e.target.closest(".st");if(c)openStation(shown[+c.dataset.i])};
+$("sheet").onclick = e=>{if(e.target.id==="sheet")$("sheet").classList.remove("open")};
+
+(async()=>{
+  drawHeader();
+  try{ meta = await getJSON("data/meta.json") }catch(e){ $("list").innerHTML=`<div class="empty">Données pas encore publiées. Réessaie dans quelques minutes.</div>`; return }
+  const g = new Date(meta.generated*1000);
+  $("foot").innerHTML = `Prix officiels (prix-carburants.gouv.fr), mis à jour le ${g.toLocaleDateString("fr-FR")} à ${g.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}. ${meta.hist_start?"Statistiques sur les 90 jours depuis le "+new Date(meta.hist_start).toLocaleDateString("fr-FR")+".":"Statistiques en cours de calcul."} Les prix vieux de plus de 7 jours sont grisés.`;
+  refresh();
+})();
+</script>
+</body>
+</html>

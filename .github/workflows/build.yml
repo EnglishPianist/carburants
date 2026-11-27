@@ -1,0 +1,64 @@
+name: Prix carburants
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # toutes les 30 minutes
+  workflow_dispatch:
+    inputs:
+      force_stats:
+        description: "Recalculer les statistiques même si déjà faites aujourd'hui"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Récupérer les statistiques en cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: stats-${{ github.run_id }}
+          restore-keys: stats-
+
+      - name: Construire les données
+        id: build
+        run: |
+          mkdir -p _site
+          cp site/index.html _site/
+          python scripts/build.py --out _site/data --cache cache ${{ inputs.force_stats && '--force-stats' || '' }}
+
+      - name: Sauvegarder les statistiques
+        if: steps.build.outputs.new_stats == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: stats-${{ github.run_id }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
