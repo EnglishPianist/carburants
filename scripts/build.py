@@ -22,6 +22,7 @@ import os
 import statistics
 import sys
 import time
+import urllib.parse
 import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
@@ -278,13 +279,103 @@ def dep_of(cp):
     return cp[:2]
 
 
+
+# ---------------------------------------------------------------- enseignes (OpenStreetMap)
+
+OVERPASS = ["https://overpass-api.de/api/interpreter",
+            "https://overpass.kumi.systems/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter"]
+OSM_QUERY = """[out:json][timeout:600];
+area["ISO3166-1"="FR"][admin_level=2]->.fr;
+nwr["amenity"="fuel"](area.fr);
+out center tags;"""
+BRANDS = [("leclerc", "E.Leclerc"), ("totalenergies", "TotalEnergies"), ("total access", "TotalEnergies Access"),
+          ("total", "TotalEnergies"), ("intermarch", "Intermarché"), ("carrefour", "Carrefour"),
+          ("auchan", "Auchan"), ("super u", "Super U"), ("hyper u", "Hyper U"), ("u express", "U Express"),
+          ("système u", "Système U"), ("systeme u", "Système U"), ("esso", "Esso"), ("shell", "Shell"),
+          ("avia", "Avia"), ("casino", "Casino"), ("géant", "Géant Casino"), ("netto", "Netto"),
+          ("dyneff", "Dyneff"), ("elan", "Elan"), ("agip", "Eni"), ("eni", "Eni"), ("bp", "BP"),
+          ("cora", "Cora"), ("leader price", "Leader Price"), ("vito", "Vito"), ("simply", "Simply Market")]
+
+
+def norm_brand(tags):
+    for key in ("brand", "name", "operator"):
+        v = (tags.get(key) or "").strip()
+        if not v or v.lower() in ("independent", "indépendant", "station service", "station-service", "yes"):
+            continue
+        low = " " + v.lower() + " "
+        for pat, nice_name in BRANDS:
+            if f" {pat}" in low or low.strip().startswith(pat):
+                return nice_name
+        if key != "operator":
+            return v[:40]
+    return None
+
+
+def fetch_osm():
+    last = None
+    for url in OVERPASS:
+        try:
+            data = urllib.parse.urlencode({"data": OSM_QUERY}).encode()
+            req = urllib.request.Request(url, data=data, headers=UA)
+            with urllib.request.urlopen(req, timeout=900) as r:
+                els = json.load(r)["elements"]
+            if len(els) > 1000:
+                return els
+            last = f"{len(els)} éléments seulement"
+        except Exception as e:  # noqa: BLE001
+            last = e
+        log(f"  Overpass {url} : échec ({last})")
+    raise RuntimeError(f"OpenStreetMap indisponible : {last}")
+
+
+def match_brands(stations, els):
+    """id station -> enseigne. 1) référence prix-carburants dans OSM ;
+    2) sinon station OSM la plus proche à moins de 150 m (si non ambiguë)."""
+    by_ref, pts = {}, defaultdict(list)
+    for e in els:
+        t = e.get("tags", {})
+        b = norm_brand(t)
+        if not b:
+            continue
+        lat = e.get("lat") or (e.get("center") or {}).get("lat")
+        lon = e.get("lon") or (e.get("center") or {}).get("lon")
+        for ref in str(t.get("ref:FR:prix-carburants", "")).split(";"):
+            ref = ref.strip().lstrip("0")
+            if ref:
+                by_ref[ref] = b
+        if lat and lon:
+            pts[(round(lat, 2), round(lon, 2))].append((lat, lon, b))
+    out, n_ref, n_geo = {}, 0, 0
+    for sid, st in stations.items():
+        b = by_ref.get(sid.lstrip("0"))
+        if b:
+            out[sid] = b
+            n_ref += 1
+            continue
+        cand = []
+        for da in (-0.01, 0, 0.01):
+            for do in (-0.01, 0, 0.01):
+                for lat, lon, bb in pts.get((round(st["a"] + da, 2), round(st["o"] + do, 2)), []):
+                    d = 111000 * math.hypot(lat - st["a"], (lon - st["o"]) * math.cos(math.radians(lat)))
+                    if d < 150:
+                        cand.append((d, bb))
+        cand.sort()
+        if cand and (len(cand) == 1 or cand[1][0] > 2 * cand[0][0] or cand[1][1] == cand[0][1]):
+            out[sid] = cand[0][1]
+            n_geo += 1
+    log(f"  enseignes : {n_ref} par référence, {n_geo} par proximité, "
+        f"{len(stations) - n_ref - n_geo} sans nom sur {len(stations)}")
+    return out
+
+
 # ---------------------------------------------------------------- sortie
 
 def tile_key(lat, lon):
     return f"{math.floor(lat / TILE)}_{math.floor(lon / TILE)}"
 
 
-def build_output(stations, hist, out):
+def build_output(stations, hist, out, brands=None):
     os.makedirs(os.path.join(out, "t"), exist_ok=True)
     os.makedirs(os.path.join(out, "h"), exist_ok=True)
     stats = hist.get("stats", {}) if hist else {}
@@ -313,6 +404,8 @@ def build_output(stations, hist, out):
                 extra[f] = e
         if extra:
             st = dict(st, s=extra)
+        if brands and sid in brands:
+            st = dict(st, n=brands[sid])
         k = tile_key(st["a"], st["o"])
         tiles[k].append(st)
         if s_se:
@@ -352,6 +445,7 @@ def main():
     ap.add_argument("--instant-file", help="fichier local (tests)")
     ap.add_argument("--year-file", action="append", help="fichier(s) d'historique local (tests)")
     ap.add_argument("--force-stats", action="store_true")
+    ap.add_argument("--osm-file", help="réponse Overpass locale (tests)")
     args = ap.parse_args()
 
     now = dt.datetime.now(PARIS)
@@ -390,7 +484,30 @@ def main():
         except Exception as e:  # noqa: BLE001
             log(f"  ATTENTION : statistiques non recalculées ({e}) — on garde les anciennes")
 
-    build_output(stations, hist, args.out)
+    brands_file = os.path.join(args.cache, "brands.json")
+    brands_data = None
+    if os.path.exists(brands_file):
+        with open(brands_file) as fh:
+            brands_data = json.load(fh)
+    if args.osm_file or not brands_data or time.time() - brands_data.get("ts", 0) > 7 * 86400:
+        log("Enseignes depuis OpenStreetMap…")
+        try:
+            els = json.load(open(args.osm_file))["elements"] if args.osm_file else fetch_osm()
+            brands_data = {"ts": int(time.time()), "els": [
+                {k: e[k] for k in ("lat", "lon", "center") if k in e} | {"tags": {
+                    k: v for k, v in e.get("tags", {}).items()
+                    if k in ("brand", "name", "operator", "ref:FR:prix-carburants")}}
+                for e in els]}
+            with open(brands_file, "w") as fh:
+                json.dump(brands_data, fh, separators=(",", ":"))
+            if os.environ.get("GITHUB_OUTPUT"):
+                with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+                    fh.write("new_stats=true\n")
+        except Exception as e:  # noqa: BLE001
+            log(f"  ATTENTION : enseignes non mises à jour ({e})")
+    brands = match_brands(stations, brands_data["els"]) if brands_data else None
+
+    build_output(stations, hist, args.out, brands)
 
 
 if __name__ == "__main__":

@@ -185,7 +185,7 @@ function drawList(nAll){
     const [p,ts] = s.p[fuel], old = Date.now()/1000-ts > 7*86400;
     return `<div class="card st ${old?"old":""} ${p===min?"best":""}" data-i="${i}">
       <div class="pr"><b>${eur(p)}</b><small>${age(ts)}</small></div>
-      <div class="info"><div class="ad">${esc(s.ad)}</div>
+      <div class="info"><div class="ad">${s.n?`<b>${esc(s.n)}</b> · `:""}${esc(s.ad)}</div>
         <small>${esc(s.v)} · ${s.d<1?Math.round(s.d*1000)+" m":s.d.toFixed(1).replace(".",",")+" km"}${s.au?" · 24/24":""}</small>
         <div>${badge(s)}</div></div></div>`;
   }).join("") + (shown.length>80?`<p class="mut">+ ${shown.length-80} autres stations : réduis le rayon.</p>`:"");
@@ -221,7 +221,7 @@ async function openStation(s){
   const k = Math.floor(s.a/meta.tile)+"_"+Math.floor(s.o/meta.tile);
   const fuels = Object.keys(FUELS).filter(f=>s.p[f]||s.r.includes(f));
   const e = (s.s&&s.s[fuel])||{};
-  let html = `<div class="row"><div style="flex:1"><b style="font-size:17px">${esc(s.ad)}</b><br><span class="mut">${esc(s.cp)} ${esc(s.v)} · ${s.d.toFixed(1).replace(".",",")} km${s.au?" · automate 24/24":""}</span></div><button id="closeBtn">✕</button></div>
+  let html = `<div class="row"><div style="flex:1"><b style="font-size:17px">${esc(s.n||s.ad)}</b><br><span class="mut">${s.n?esc(s.ad)+", ":""}${esc(s.cp)} ${esc(s.v)} · ${s.d.toFixed(1).replace(".",",")} km${s.au?" · automate 24/24":""}</span></div><button id="closeBtn">✕</button></div>
     <div class="grid">${fuels.map(f=>s.p[f]?`<div class="${f===fuel?"cur":""}"><b>${eur(s.p[f][0])}</b><small>${FUELS[f]} · ${age(s.p[f][1])}</small></div>`:`<div><b>—</b><small>${FUELS[f]} · rupture</small></div>`).join("")}</div>`;
   if(e.lo!==undefined) html += `<p class="mut">${FUELS[fuel]} sur 90 jours : de ${eur(e.lo)} à ${eur(e.hi)} €. Aujourd'hui, le prix est plus bas que ${100-e.pct} % des jours.</p>`;
   html += `<div id="ch"><p class="mut">Chargement de l'historique…</p></div>`;
@@ -274,7 +274,7 @@ $("sheet").onclick = e=>{if(e.target.id==="sheet")$("sheet").classList.remove("o
   drawHeader();
   try{ meta = await getJSON("data/meta.json") }catch(e){ $("list").innerHTML=`<div class="empty">Données pas encore publiées. Réessaie dans quelques minutes.</div>`; return }
   const g = new Date(meta.generated*1000);
-  $("foot").innerHTML = `Prix officiels (prix-carburants.gouv.fr), mis à jour le ${g.toLocaleDateString("fr-FR")} à ${g.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}. ${meta.hist_start?"Statistiques sur les 90 jours depuis le "+new Date(meta.hist_start).toLocaleDateString("fr-FR")+".":"Statistiques en cours de calcul."} Les prix vieux de plus de 7 jours sont grisés.`;
+  $("foot").innerHTML = `Prix officiels (prix-carburants.gouv.fr), mis à jour le ${g.toLocaleDateString("fr-FR")} à ${g.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}. ${meta.hist_start?"Statistiques sur les 90 jours depuis le "+new Date(meta.hist_start).toLocaleDateString("fr-FR")+".":"Statistiques en cours de calcul."} Les prix vieux de plus de 7 jours sont grisés. Enseignes : © contributeurs OpenStreetMap.`;
   refresh();
 })();
 </script>
